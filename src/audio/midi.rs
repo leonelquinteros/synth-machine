@@ -42,65 +42,89 @@ pub fn parse_midi_message(message: &[u8]) -> Option<SynthEvent> {
     }
 }
 
+/// Returns the names of all currently available MIDI input ports.
+pub fn list_midi_input_ports() -> Vec<String> {
+    let midi_in = match MidiInput::new("AGY-ANALOG 01 Query") {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    let ports = midi_in.ports();
+    ports
+        .iter()
+        .filter_map(|p| midi_in.port_name(p).ok())
+        .collect()
+}
+
 pub struct MidiManager {
     _connection: Option<MidiInputConnection<()>>,
     pub connected_device: Option<String>,
     pub is_available: bool,
+    event_tx: Sender<SynthEvent>,
 }
 
 impl MidiManager {
     pub fn new(event_tx: Sender<SynthEvent>) -> Self {
+        let mut mgr = Self {
+            _connection: None,
+            connected_device: None,
+            is_available: false,
+            event_tx: event_tx.clone(),
+        };
+        mgr.connect_to_port_index(0);
+        mgr
+    }
+
+    /// Reconnect to a specific port by index (as returned by `list_midi_input_ports()`).
+    pub fn connect_to_port_index(&mut self, port_index: usize) {
         let midi_in = match MidiInput::new("AGY-ANALOG 01 Input") {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("Failed to initialize MIDI input system: {e}");
-                return Self {
-                    _connection: None,
-                    connected_device: None,
-                    is_available: false,
-                };
+                self.is_available = false;
+                self._connection = None;
+                self.connected_device = None;
+                return;
+            }
+        };
+        self.is_available = true;
+
+        let ports = midi_in.ports();
+        let port = match ports.get(port_index) {
+            Some(p) => p,
+            None => {
+                // No ports available or index out of range — not an error, just stand by
+                self._connection = None;
+                self.connected_device = None;
+                return;
             }
         };
 
-        let ports = midi_in.ports();
-        if let Some(port) = ports.first() {
-            let port_name = midi_in.port_name(port).unwrap_or_else(|_| "MIDI Keyboard".to_string());
-            let tx = event_tx.clone();
+        let port_name = midi_in
+            .port_name(port)
+            .unwrap_or_else(|_| "MIDI Keyboard".to_string());
+        let tx = self.event_tx.clone();
 
-            let conn_res = midi_in.connect(
-                port,
-                "agy-synth-port",
-                move |_stamp, message, _| {
-                    if let Some(event) = parse_midi_message(message) {
-                        let _ = tx.send(event);
-                    }
-                },
-                (),
-            );
+        let conn_res = midi_in.connect(
+            port,
+            "agy-synth-port",
+            move |_stamp, message, _| {
+                if let Some(event) = parse_midi_message(message) {
+                    let _ = tx.send(event);
+                }
+            },
+            (),
+        );
 
-            match conn_res {
-                Ok(conn) => {
-                    println!("Connected to MIDI device: [{}]", port_name);
-                    Self {
-                        _connection: Some(conn),
-                        connected_device: Some(port_name),
-                        is_available: true,
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Failed to connect to MIDI port {}: {err}", port_name);
-                    Self {
-                        _connection: None,
-                        connected_device: None,
-                        is_available: true,
-                    }
-                }
+        match conn_res {
+            Ok(conn) => {
+                println!("Connected to MIDI device: [{}]", port_name);
+                self._connection = Some(conn);
+                self.connected_device = Some(port_name);
             }
-        } else {
-            Self {
-                _connection: None,
-                connected_device: None,
-                is_available: true,
+            Err(err) => {
+                eprintln!("Failed to connect to MIDI port {}: {err}", port_name);
+                self._connection = None;
+                self.connected_device = None;
             }
         }
     }

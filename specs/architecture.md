@@ -54,3 +54,16 @@ For live audio synthesis, thread discipline is non-negotiable:
 - **GUI**: `eframe` / `egui` (immediate-mode UI rendered via wgpu / Glow / Metal).
 - **MIDI**: `midir` for cross-platform MIDI port enumeration and input polling.
 - **Lock-free Data Structures**: `crossbeam-channel` or `rtrb` for bounded real-time audio communication.
+
+## 4. Device Management
+
+### Audio Output Device Selection
+- `AudioSystem::list_output_devices() -> Vec<String>` — enumerates all output device names on the default `cpal` host. Called each frame the settings panel is open (cheap — does not open any stream).
+- `AudioSystem::new_with_device(device_name: Option<&str>) -> Result<Self, _>` — builds a complete new audio stream on a named device. `None` falls back to the system default. Used by `AudioSystem::new()` and by the settings panel when the user picks a new device.
+- **Stream rebuild**: when the user selects a different output device in the UI, `SynthApp` calls `new_with_device`, replaces `self.audio`, and immediately sends a `SynthEvent::UpdateParams` with the current `SynthParams` so the fresh DSP engine starts with the correct state. The old `Stream` is dropped (and CoreAudio resources released) automatically via `Drop`.
+
+### MIDI Input Port Selection
+- `list_midi_input_ports() -> Vec<String>` — free function that opens a temporary `MidiInput` handle to enumerate ports, then drops it. Safe to call from the UI thread.
+- `MidiManager::connect_to_port_index(port_index: usize)` — drops the current `MidiInputConnection` (if any) and opens a fresh one on the port at the given index. The `Sender<SynthEvent>` is stored inside `MidiManager` so reconnection is self-contained and requires no arguments from the caller beyond the port index.
+- **Hot-swap**: because `MidiInputConnection` owns a background thread for MIDI I/O, dropping the old connection terminates that thread cleanly before the new one is started.
+

@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32, Key, RichText, Stroke, Ui, Vec2};
 
-use crate::audio::{AudioSystem, MidiManager};
+use crate::audio::{list_midi_input_ports, AudioSystem, MidiManager};
 use crate::dsp::effects::ChorusMode;
 use crate::dsp::lfo::{LfoTarget, LfoWaveform};
 use crate::dsp::params::{FilterMode, SynthEvent, SynthParams, VoiceMode, Waveform};
@@ -17,6 +17,9 @@ pub struct SynthApp {
     preset_manager: PresetManager,
     keyboard: KeyboardController,
     oscilloscope: Oscilloscope,
+    // Device settings panel
+    show_device_settings: bool,
+    device_error: Option<String>,
 }
 
 impl SynthApp {
@@ -32,6 +35,8 @@ impl SynthApp {
             preset_manager,
             keyboard: KeyboardController::new(),
             oscilloscope: Oscilloscope::new(512),
+            show_device_settings: false,
+            device_error: None,
         }
     }
 }
@@ -67,13 +72,37 @@ impl eframe::App for SynthApp {
                 .handle_qwerty_input(ui, self.params.octave_shift, &mut events);
 
             // ── 1. Top Header Bar ──────────────────────────────────────────
-            render_header(
+            let (switch_audio_to, switch_midi_to) = render_header(
                 ui,
                 &mut self.params,
                 &mut self.preset_manager,
                 &self.audio,
                 &self.midi,
+                &mut self.show_device_settings,
+                &self.device_error,
             );
+
+            // Handle audio output device switch
+            if let Some(audio_device_name) = switch_audio_to {
+                match AudioSystem::new_with_device(Some(&audio_device_name)) {
+                    Ok(new_audio) => {
+                        self.audio = new_audio;
+                        self.midi = MidiManager::new(self.audio.event_tx.clone());
+                        self.last_sent_params = self.params;
+                        // Immediately sync params to new engine
+                        let _ = self.audio.event_tx.send(SynthEvent::UpdateParams(self.params));
+                        self.device_error = None;
+                    }
+                    Err(e) => {
+                        self.device_error = Some(format!("Audio: {}", e));
+                    }
+                }
+            }
+
+            // Handle MIDI input port switch
+            if let Some(midi_port_index) = switch_midi_to {
+                self.midi.connect_to_port_index(midi_port_index);
+            }
 
             ui.add_space(6.0);
 
@@ -216,13 +245,18 @@ impl eframe::App for SynthApp {
 //  Section renderers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Returns `(Option<audio_device_name>, Option<midi_port_index>)` when the user picks a new device.
 fn render_header(
     ui: &mut Ui,
     params: &mut SynthParams,
     preset_manager: &mut PresetManager,
     audio: &AudioSystem,
     midi: &MidiManager,
-) {
+    show_device_settings: &mut bool,
+    device_error: &Option<String>,
+) -> (Option<String>, Option<usize>) {
+    let mut switch_audio_to: Option<String> = None;
+    let mut switch_midi_to: Option<usize> = None;
     // Row 1: brand + preset + master volume
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -284,9 +318,16 @@ fn render_header(
             RichText::new(format!("{:.0}%", params.master_volume * 100.0))
                 .color(Color32::from_rgb(220, 225, 235)),
         );
+        ui.separator();
+
+        // Settings toggle
+        let settings_lbl = if *show_device_settings { "⚙ ✕" } else { "⚙" };
+        if ui.small_button(settings_lbl).clicked() {
+            *show_device_settings = !*show_device_settings;
+        }
     });
 
-    // Row 2: octave + device status — compact, right-aligned on wider screens
+    // Row 2: octave + device status
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
 
@@ -318,7 +359,7 @@ fn render_header(
             );
         } else {
             ui.label(
-                RichText::new("🎹 MIDI Ready")
+                RichText::new("🎹 No MIDI")
                     .small()
                     .color(Color32::from_rgb(140, 145, 155)),
             );
@@ -336,7 +377,89 @@ fn render_header(
             .small()
             .color(Color32::from_rgb(100, 200, 160)),
         );
+
+        // Inline error
+        if let Some(err) = device_error {
+            ui.separator();
+            ui.label(
+                RichText::new(format!("⚠ {}", err))
+                    .small()
+                    .color(Color32::from_rgb(255, 100, 80)),
+            );
+        }
     });
+
+    // ── Device Settings Panel (collapsible) ───────────────────────────────────
+    if *show_device_settings {
+        ui.add_space(2.0);
+        egui::Frame::new()
+            .fill(Color32::from_rgb(28, 32, 38))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(60, 70, 85)))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                    ui.label(
+                        RichText::new("DEVICE SETTINGS")
+                            .small()
+                            .strong()
+                            .color(Color32::from_rgb(255, 185, 40)),
+                    );
+
+                    ui.separator();
+
+                    // ── Audio Output Picker ───────────────────────────────────
+                    ui.label(RichText::new("Audio Out:").small());
+                    let audio_devices = AudioSystem::list_output_devices();
+                    let current_audio = &audio.device_name;
+                    egui::ComboBox::from_id_salt("audio_device_select")
+                        .selected_text(current_audio.as_str())
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for name in &audio_devices {
+                                let selected = name == current_audio;
+                                if ui.selectable_label(selected, name).clicked() && !selected {
+                                    switch_audio_to = Some(name.clone());
+                                }
+                            }
+                        });
+
+                    ui.separator();
+
+                    // ── MIDI Input Picker ─────────────────────────────────────
+                    ui.label(RichText::new("MIDI In:").small());
+                    let midi_ports = list_midi_input_ports();
+                    let current_midi = midi
+                        .connected_device
+                        .as_deref()
+                        .unwrap_or("— None —");
+                    egui::ComboBox::from_id_salt("midi_device_select")
+                        .selected_text(current_midi)
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
+                            for (i, name) in midi_ports.iter().enumerate() {
+                                let selected = midi
+                                    .connected_device
+                                    .as_deref()
+                                    .is_some_and(|d| d == name);
+                                if ui.selectable_label(selected, name).clicked() && !selected {
+                                    switch_midi_to = Some(i);
+                                }
+                            }
+                            if midi_ports.is_empty() {
+                                ui.label(
+                                    RichText::new("No MIDI ports available")
+                                        .small()
+                                        .color(Color32::from_rgb(140, 145, 155)),
+                                );
+                            }
+                        });
+                });
+            });
+    }
+
+    (switch_audio_to, switch_midi_to)
 }
 
 fn render_osc_panel(ui: &mut Ui, params: &mut SynthParams) {

@@ -17,12 +17,41 @@ pub struct AudioSystem {
 
 impl AudioSystem {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("No default audio output device found")?;
+        Self::new_with_device(None)
+    }
 
-        let device_name = device
+    /// Enumerate all available output device names on the default host.
+    pub fn list_output_devices() -> Vec<String> {
+        let host = cpal::default_host();
+        host.output_devices()
+            .map(|devices| {
+                devices
+                    .filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Build an audio stream on a specific device by name.
+    /// Pass `None` to use the system default output device.
+    pub fn new_with_device(device_name: Option<&str>) -> Result<Self, Box<dyn std::error::Error>> {
+        let host = cpal::default_host();
+
+        let device = match device_name {
+            Some(name) => host
+                .output_devices()?
+                .find(|d| {
+                    d.description()
+                        .map(|desc| desc.name() == name)
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| format!("Audio device '{}' not found", name))?,
+            None => host
+                .default_output_device()
+                .ok_or("No default audio output device found")?,
+        };
+
+        let resolved_name = device
             .description()
             .map(|d| d.name().to_string())
             .unwrap_or_else(|_| "Default Device".to_string());
@@ -83,7 +112,7 @@ impl AudioSystem {
             event_tx,
             viz_consumer,
             sample_rate,
-            device_name,
+            device_name: resolved_name,
         })
     }
 

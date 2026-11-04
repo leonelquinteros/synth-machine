@@ -46,3 +46,10 @@ Note pitch:                C   D   E   F   G   A   B   C   D   E
 5. **Visualizer & Virtual Keyboard**:
    - Real-time audio waveform / oscilloscope display showing the actual generated output.
    - Visual piano keys highlighting currently triggered notes.
+
+6. **⚙ Device Settings Panel** (collapsible, toggled from header):
+   - **Audio Output** dropdown: enumerates all CoreAudio output devices by name. Selecting one tears down the existing `cpal` stream, opens a new one at the device's native sample rate, and immediately re-syncs the current patch params to the fresh DSP engine. Stream rebuild is transparent — no audio glitch on other devices.
+   - **MIDI Input** dropdown: enumerates all connected MIDI ports. Selecting one hot-swaps the `midir` connection without restarting the app. The previously active connection is dropped before the new one is opened.
+   - Inline error display: if a device fails to open (e.g. device disconnected between enumeration and selection), the error message appears in amber in the header status row.
+   - Device status row (always visible): shows the active audio device name + sample rate and the connected MIDI port name, or "No MIDI" if none is connected.
+

@@ -36,3 +36,12 @@
 - [x] Soft saturation / warm tube overdrive with automatic makeup gain.
 - [x] Dedicated Master Effects Rack in UI with real-time controls.
 - [x] Factory presets upgraded to showcase polyphonic pads, stereo chorus, and tape delay.
+
+## Phase 5: Device Management & Preset Library Expansion (✅ Completed)
+- [x] Audio output device selection — enumerate all CoreAudio output devices, pick any at runtime (stream rebuilt transparently, DSP state preserved).
+- [x] MIDI input port selection — enumerate all connected MIDI ports, hot-swap connection without restarting the app.
+- [x] In-app ⚙ Settings panel in the header bar (collapsible, non-modal).
+- [x] Inline error reporting for failed device opens (shown in header status row).
+- [x] Factory preset library expanded to 23 presets spanning iconic hardware: Minimoog Model D, Roland Juno-60/106, Sequential Prophet-5, Oberheim OB-Xa, Yamaha CS-80, Roland TB-303, ARP Odyssey/2600, Korg Polysix/MS-20, and classic electric keys.
+- [x] Preset dropdown upgraded to show category tags `[Category] Name` with wider ComboBox (210 px).
+
